@@ -1,0 +1,498 @@
+---
+title: "All together"
+output: html_document
+date: "2024-02-04"
+---
+```{r, eval = TRUE, Warnings = FALSE}
+#install.packages("matrixStats")
+#install.packages("ggpubr")
+#install.packages("psych")
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(psych)
+library(matrixStats)
+library(ez)
+library(Hmisc)
+library(ppcor)
+library(car)
+```
+
+
+#formatting HPS Data
+````{r, eval = TRUE}
+HPS <- read.csv("./data/results-survey473943.csv")
+
+HPS[HPS == "stimmt"] <- 1
+HPS[HPS == "stimmt nicht"] <- 0
+
+#Checking for people too old to participate
+Alter_Check <- any(HPS$Bitte.geben.Sie.nachfolgend.Ihr.Alter.an. > 65)
+#no people above the cutoff of 65 years
+
+#extracting and saving all relevant bits of data
+HPS_IDs <- HPS[,8]
+HPS_Score <- HPS[,10:57]
+HPS_Alter <- HPS[,9]
+colnames(HPS_Score) <- c(1:48)
+
+#recoding of negativly poled items
+negative_coding <- c(1, 2, 6, 14, 16, 17, 21, 24,25, 27, 31, 47, 48)
+HPS_Score[negative_coding][HPS_Score[negative_coding] == 1] <- "eins"
+HPS_Score[negative_coding][HPS_Score[negative_coding] == 0] <- 1
+HPS_Score[negative_coding][HPS_Score[negative_coding] == "eins"] <- 0
+
+#Changing attributes, calculating sum scores for each person, renaming rows
+HPS_Score <- as.data.frame(sapply(HPS_Score, as.numeric))
+HPS_Score <- rowSums(HPS_Score)
+HPS_Score <- data.frame(
+  Score = HPS_Score
+)
+rownames(HPS_Score)<- HPS_IDs
+HPS_Score <- cbind(HPS_Score, HPS_Alter)
+
+rm(HPS, HPS_IDs, negative_coding, HPS_Alter, Alter_Check)
+
+#save data
+write.csv(HPS_Score, file = "./data/HPS_Score.csv")
+
+```` 
+
+
+#formatting Pavlovia data
+```{r, eval=TRUE}
+#load Pavlovia results
+temp = list.files(pattern="\\.csv$")
+list.dfs = lapply(temp, read.csv)
+rm(temp)
+
+#checking if all data is complete
+list.test <- list()
+for (i in 1:length(list.dfs)){
+comp <- as.data.frame(list.dfs[i])
+test <-  grep(pattern = "48", x = names(comp), invert =FALSE, fixed = TRUE)
+list.test <- c(list.test, list(test))
+}
+#all data is complete
+
+rm(i, test, comp)
+
+```
+```{r, eval = TRUE}
+rm(list.test)
+#creating lists for later use
+list.times <- list()
+list.answer <- list()
+list.pattern <- list()
+
+#very long loop for formatting each data frame
+for (i in 1:length(list.dfs)){
+n_Item <- as.data.frame(list.dfs[i])
+
+#extracting relevant data
+n_ID <- n_Item$participant[1]
+n_Item <- n_Item[,-c(1:16)]
+
+#deleting unnecessary columns
+n_cols <- grep(pattern = "Goodbye", x = names(n_Item), invert =TRUE, fixed = TRUE)
+n_Item <- n_Item[n_cols]
+n_cols <- grep(pattern = ".rt", x = names(n_Item), invert = TRUE, fixed = TRUE)
+n_Item <- n_Item[n_cols]
+n_cols <- grep(pattern = "duration", x = names(n_Item), invert = TRUE, fixed = TRUE)
+n_Item <- n_Item[n_cols]
+n_cols <- grep(pattern = "Pause", x= names (n_Item), invert =TRUE, fixed = TRUE )
+n_Item <- n_Item[n_cols]
+
+#deleting NA's and empty cells
+vec_n <- unlist(n_Item, use.names = TRUE)
+vec_n <- na.omit(vec_n)
+vec_n <- vec_n[vec_n!= ""]
+
+#calculating times spent on each item and creating a data frame
+n_start <- grep(pattern = "started", x = names(vec_n), invert = FALSE, fixed = TRUE)
+n_end <- grep(pattern = "stopped", x = names(vec_n), invert = FALSE, fixed = TRUE)
+n_times_start <- vec_n[n_start]
+n_times_end <- vec_n[n_end]
+n_times <- as.numeric(n_times_end) - as.numeric(n_times_start)
+n_times <- round (n_times,2)
+n_times <- as.data.frame (n_times)
+colnames(n_times) <- n_ID
+
+#data frame with the answers (correct or incorrect)
+n_cor <- grep(pattern = "corr", x = names(vec_n), invert = FALSE, fixed = TRUE)
+n_answer <- vec_n[n_cor]
+n_answer <- as.numeric(n_answer)
+n_answer <- as.data.frame (n_answer)  
+colnames(n_answer) <- n_ID
+
+#saving dataframes in list
+list.times <- c(list.times, list(n_times))
+list.answer <- c(list.answer, list(n_answer))
+
+#creating llist with data frames to check the answer patterns of each person
+n_pattern <- grep(pattern = "keys", x = names(vec_n), invert = FALSE, fixed = TRUE) 
+sum1 <- as.data.frame(sum(vec_n[n_pattern]==1))
+sum2 <- as.data.frame(sum(vec_n[n_pattern]==2))
+sum3 <- as.data.frame(sum(vec_n[n_pattern]==3))
+sum4 <- as.data.frame(sum(vec_n[n_pattern]==4))
+
+ans_pattern <- cbind(sum1,sum2,sum3,sum4)
+colnames(ans_pattern) <- c("Sum1", "Sum2", "Sum3", "Sum4")
+rownames(ans_pattern) <- n_ID
+list.pattern <- c(list.pattern, list(ans_pattern))
+
+rm(ans_pattern, n_times, n_answer, sum1, sum2, sum3, sum4, n_ID, n_cor, n_start, n_end, n_times_start, n_times_end, vec_n, n_cols, n_Item, n_pattern, i)
+}
+
+
+#dataframes for later use
+df.answer <- 0
+df.times <- 0
+df.pattern <- 0
+
+
+#changing the previously created lists into 3 data frames
+for(j in 1:length(list.answer)){
+df.ex <- list.answer[[1]]
+list.answer <- list.answer[-1]
+df.answer <- cbind(df.answer, df.ex)
+}
+
+for(k in 1:length(list.times)){
+df.ex2 <- list.times[[1]]
+list.times <- list.times[-1]
+df.times <- cbind(df.times, df.ex2)
+}
+
+for(l in 1:length(list.pattern)){
+df.ex3 <- list.pattern[[1]]
+list.pattern <- list.pattern[-1]
+df.pattern <- rbind(df.pattern, df.ex3)
+}
+
+df.answer <- df.answer[-1]
+df.times <- df.times[-1]
+df.pattern <- df.pattern[-1,]
+
+rm(df.ex, df.ex2, df.ex3 , list.pattern, list.answer, list.times, list.dfs, i, j, k, l)
+
+#saving data
+write.csv(df.answer, file = "./data/x_answers.csv")
+write.csv(df.times, file = "./data/x_times.csv")
+write.csv(df.pattern, file = "./data/x_pattern.csv")
+
+```
+
+
+
+#Checking for data that needs to be excluded
+##based on preregistration
+```{r, eval = TRUE}
+rm(df.pattern)
+#no people with unusual answer patterns which would justify exclusion were found
+
+#Items 8 and 34 had to be excluded, due to technical errors which resulted in most people not seeing the items
+x_answers <- df.answer [-c(8, 34),]
+x_times <- df.times [-c(8,34),]
+
+rm(df.answer, df.times)
+
+#again, due to technical issues, we had to calculate the times spent on each item, which resulted in some deviations from the real time spent, and some impossible times, which are above what was possible wit our design. This is correcting all times
+x_times <- x_times-2
+x_times[x_times > 40.00] <- 40.00
+x_times[x_times < 0.00] <- 0.00
+
+
+#Criteria of exclusion: more then 2.5SD faster than mean in 10% or more items, with wrong answers 
+time_mean <- as.data.frame(rowMeans(x_times))
+time_sd <- as.data.frame(rowSds(as.matrix(x_times)))
+time_min <- time_mean - 2.5 *time_sd
+time_ausschluss <- as.data.frame(x_times[-c(1,2,3,4,5,6,8,13,15,16,17,21,26,27,28,29,30,31,32,33,37,38,39,40,41,42,43,44,45,47),])
+time_ausschluss_sd <- as.data.frame(time_min[-c(1,2,3,4,5,6,8,13,15,16,17,21,26,27,28,29,30,31,32,33,37,38,39,40,41,42,43,44,45,47),])
+#after visual inspection of the results: removal of LI71KA
+#Note: CMM47WI hat noteworthy deviations from mean time as well, however our criteria of exclusion is, in hindsight, far too strict, therefore we can't remove them.
+rm(time_ausschluss, time_ausschluss_sd, time_mean, time_min, time_sd)
+x_answers$LI71KA <- NULL
+x_times$LI71KA <- NULL
+
+#extracting only the full sets of data
+full_sets <- colnames(x_answers)
+HPS_Score <- HPS_Score[full_sets,]
+HPS_Score <- HPS_Score[- c(7,21),]
+full_sets <- rownames(HPS_Score)
+x_answers <- x_answers[full_sets]
+x_times <- x_times[full_sets]
+
+rm(full_sets)
+
+```
+
+#Preparation of data for ANOVA and Correlations
+```{r, eval = TRUE}
+#Calculating sums
+x_answer_sum <- as.data.frame(colSums(x_answers))
+x_times_sum <- as.data.frame(colSums(x_times))
+
+#calculating answer sums for each distractor condition
+x_answers_none <- colSums(x_answers[1:11 ,])
+x_answers_neutral <- colSums(x_answers[12:23,])
+x_answers_positive <- colSums(x_answers[24:34,])
+x_answers_negative <- colSums(x_answers[35:46,])
+
+x_answers_none <- data.frame(
+  Score_none = x_answers_none
+)
+x_answers_neutral <- data.frame(
+  Score_neutral = x_answers_neutral
+)
+x_answers_positive <- data.frame(
+  Score_positive = x_answers_positive
+)
+x_answers_negative <- data.frame(
+  Score_negative = x_answers_negative
+)
+
+x_answers_positive[x_answers_positive > 5] <- x_answers_positive[x_answers_positive >5] + 1
+x_answers_none[x_answers_none > 5] <- x_answers_none[x_answers_none >5] + 1
+
+#due to technical issues, as mentioned earlier, the conditions without a distractor / positive distractor consist only of 11 items each. lacking a better method to compensate, individuals who had 6 or more correct answers in those conditions will get one additional point, artifically widening the differences between individuals.
+#as for the time spent working on these conditions, the mean time of their other items will be added
+#calculating of the mean times for each distractor condition
+
+x_times_none <- colSums(x_times[1:11 ,])
+x_times_neutral <- colSums(x_times[12:23,])
+x_times_positive <- colSums(x_times[24:34,])
+x_times_negative <- colSums(x_times[35:46,])
+
+x_times_none <- data.frame(
+  Time_none = x_times_none
+)
+x_times_neutral <- data.frame(
+  Time_neutral = x_times_neutral
+)
+x_times_positive <- data.frame(
+  Time_positive = x_times_positive
+)
+x_times_negative <- data.frame(
+  Time_negative = x_times_negative
+)
+
+non_add <- x_times_none / 11
+x_times_none <- x_times_none + non_add
+pos_add <- x_times_positive / 11
+x_times_positive <- x_times_positive + pos_add
+rm(non_add, pos_add)
+
+
+#creating upper and lower quartile for HPS Score
+HPS_Score <- HPS_Score[order(HPS_Score$Score, decreasing = T), ]
+#Since 27 can't be split into clean quarters, we define the upper/lower quartile as 7 values each, which also makes more sense than 6 considering which values would be included
+HPS_low <- HPS_Score[21:27,]
+HPS_high <- HPS_Score[1:7,]
+
+
+#binding and renaming all previous dataframes to create one suitable for ANOVA
+HPS_low <- HPS_low[1]
+HPS_high <- HPS_high[1]
+ID_low <- rownames(HPS_low)
+ID_high <- rownames(HPS_high)
+
+low <- c("low", "low","low", "low", "low", "low", "low")
+low_mark <- data.frame(quartile =  low)
+high <- c("high", "high","high", "high", "high", "high", "high")
+high_mark <- data.frame(quartile =  high)
+
+HPS_low <- cbind(ID_low ,low_mark, HPS_low)
+HPS_high <- cbind(ID_high , high_mark, HPS_high)
+rm(high, low_mark, low, high_mark)
+
+HPS_low <- cbind(HPS_low , x_answers_none[ID_low,],  x_answers_neutral[ID_low,], x_answers_positive[ID_low,],  x_answers_negative[ID_low,], x_times_none[ID_low,],  x_times_neutral[ID_low,],  x_times_positive[ID_low,] ,  x_times_negative[ID_low,])
+
+HPS_high <- cbind(HPS_high , x_answers_none[ID_high,],  x_answers_neutral[ID_high,], x_answers_positive[ID_high,],  x_answers_negative[ID_high,], x_times_none[ID_high,],  x_times_neutral[ID_high,],  x_times_positive[ID_high,] ,  x_times_negative[ID_high,])
+
+names <- c("ID", "Quartile", "HPS_Score", "none", "neut", "pos", "neg", "none2", "neut2", "pos2", "neg2" )
+colnames(HPS_high) <- names
+colnames(HPS_low) <- names
+
+data_anova2 <- rbind(HPS_low, HPS_high)
+
+rm(names, HPS_high, HPS_low, ID_high, ID_low)
+
+#factorising
+dat_anova <- data_anova2 %>%
+  gather(key = "distractor", value = "ans_score", none, neut, pos,neg) %>%
+  convert_as_factor(ID, distractor, Quartile)
+
+dat_anova2 <- data_anova2 %>%
+  gather(key = "distractor", value = "ans_time", none2, neut2, pos2,neg2) %>%
+  convert_as_factor(ID, distractor, Quartile)
+
+#removing time/answer sums from respective data frames
+dat_anova <- dat_anova[,-c(4,5,6,7)]
+dat_anova2 <- dat_anova2[,-c(4,5,6,7)]
+
+#merging into one final dataframe for the ANOVA
+data_anova <- cbind(dat_anova, dat_anova2[,"ans_time"])
+names <- c("ID", "Quartile", "HPS_Score", "distractor", "x_score", "x_time")
+colnames(data_anova) <- names
+rm(names)
+
+data_corr <- cbind(HPS_Score, x_answer_sum, x_answers_none, x_answers_neutral, x_answers_positive, x_answers_negative, x_times_sum, x_times_none, x_times_neutral, x_times_positive, x_times_negative)
+
+
+```
+
+#Statistical Analyses to check prerequisites / descriptive statistics
+##Item Statistics
+```{r, eval= TRUE}
+#switching rows and columns of data frame, to calculate Item-means and further statistics
+x_answers <- as.data.frame(t(x_answers))
+x_times <- as.data.frame(t(x_times))
+desc <- round(psych::describe(x_answers),2)
+
+#most notable: psychological Item difficulty is way too low
+multi.hist(desc$mean)
+
+```
+
+##Boxplot 1
+```{r, eval =TRUE}
+ggboxplot(
+  data_anova, x = "Quartile", y = "x_score",
+  color = "distractor"
+ , palette = "jco"
+  )
+```
+
+##Boxplot 2
+```{r, eval =TRUE}
+ggboxplot(
+  data_anova, x = "Quartile", y = "x_time",
+  color = "distractor"
+ , palette = "jco"
+  )
+```
+
+Anhand der beiden boxplots ist es bereits relativ ersichtlich, dass die Ergebnisse ziemlich unsinnig werden :C
+
+##Checking for outliers
+```{r, eval = TRUE}
+
+data_anova %>%
+  group_by(Quartile, distractor) %>%
+  identify_outliers(x_score)
+
+data_anova %>%
+  group_by(Quartile, distractor) %>%
+  identify_outliers(x_time)
+
+#Since in both cases CMM47WI is an outlier, but not an extreme one, it might be useful to do ANOVa with, and without said participant
+
+#data set without the outlier
+data_anova_NOutlier <- data_anova[-c(3,17,31,45),]
+```
+
+
+##Shapiro Wilk Test for Normal distribution
+```{r, eval =TRUE}
+data_anova %>%
+  group_by(Quartile, distractor) %>%
+  shapiro_test(x_score)
+
+data_anova %>%
+  group_by(Quartile, distractor) %>%
+  shapiro_test(x_time)
+
+#not significant, albeit barely --> we continue under the assumption of a normal distribution
+
+data_anova_NOutlier %>%
+  group_by(Quartile, distractor) %>%
+  shapiro_test(x_score)
+
+data_anova_NOutlier %>%
+  group_by(Quartile, distractor) %>%
+  shapiro_test(x_time)
+```
+
+##Levene Test for homgenity of variance
+````{r, eval = TRUE}
+data_anova %>%
+  group_by(distractor) %>%
+  levene_test(x_score ~ Quartile)
+
+data_anova %>%
+  group_by(distractor) %>%
+  levene_test(x_time ~ Quartile)
+
+data_anova_NOutlier %>%
+  group_by(distractor) %>%
+  levene_test(x_score ~ Quartile)
+
+data_anova %>%
+  group_by(distractor) %>%
+  levene_test(x_time ~ Quartile)
+
+#not significant, we assume homogenity of variance
+````
+
+##Homogenity of covariances
+```{r, eval = TRUE}
+box_m(data_anova[, "x_score", drop = FALSE], data_anova$Quartile)
+box_m(data_anova[, "x_time", drop = FALSE], data_anova$Quartile)
+box_m(data_anova_NOutlier[, "x_score", drop = FALSE], data_anova_NOutlier$Quartile)
+box_m(data_anova_NOutlier[, "x_time", drop = FALSE], data_anova_NOutlier$Quartile)
+
+#not significant, we assume homogenity of covariances
+```
+
+
+#Statistical Analyses
+##Two x Four Mixed ANOVA
+```{r, eval =TRUE}
+Anova_Score<- ezANOVA(data_anova,
+        dv = x_score,
+        wid = ID,
+        within = distractor,
+        between = Quartile)
+
+ANOVA_time <- ezANOVA(data_anova,
+        dv = x_time,
+        wid = ID,
+        within = distractor,
+        between = Quartile)
+
+#for the first two ANOVA, we are only interested in the interaction effect, with alpha = .5/2
+#no significant effects were observed
+#the exclusion of the outlier does not change the result
+
+
+#We also conducted 8 one-way ANOVA to look at the between-group effect (Quartile), with alpha = .5/8 with no significant results. We only included one example of such an ANOVA in the code
+ANOVA_score_none <- ezANOVA(data_anova2,
+        dv = none,
+        wid = ID,
+        between = Quartile)
+
+#our first hypothesis could not be proven, whilst the second one could
+
+
+
+```
+
+##Correlations
+```{r, eval = TRUE}
+pcor.test(data_corr$Score, data_corr$`colSums(x_times)`, data_corr$HPS_Alter, method ="pearson")
+pcor.test(data_corr$Score, data_corr$`colSums(x_answers)`, data_corr$HPS_Alter, method ="pearson")
+
+pcor.test(data_corr$Score, data_corr$Score_none, data_corr$HPS_Alter, method ="pearson")
+pcor.test(data_corr$Score, data_corr$Score_neutral, data_corr$HPS_Alter, method ="pearson")
+pcor.test(data_corr$Score, data_corr$Score_positive, data_corr$HPS_Alter, method ="pearson")
+pcor.test(data_corr$Score, data_corr$Score_negative, data_corr$HPS_Alter, method ="pearson") #signifikant
+
+pcor.test(data_corr$Score, data_corr$Time_none, data_corr$HPS_Alter, method ="pearson")
+pcor.test(data_corr$Score, data_corr$Time_neutral, data_corr$HPS_Alter, method ="pearson")
+pcor.test(data_corr$Score, data_corr$Time_positive, data_corr$HPS_Alter, method ="pearson")
+pcor.test(data_corr$Score, data_corr$Time_negative, data_corr$HPS_Alter, method ="pearson")
+
+#the correlations do not offer advanced insight into the data, and no interprations aside from "there is no effect" appears possible.
+
+```
